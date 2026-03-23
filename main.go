@@ -22,11 +22,12 @@ func (cfg *apiConfig) middlewareMetricsInc(next http.Handler) http.Handler {
 
 // Create handler that writes the number of requests so far
 func (cfg *apiConfig) metricsHandler(w http.ResponseWriter, r *http.Request) {
-	w.Header().Add("Content-Type", "text/plain; charset=utf-8")
+	w.Header().Add("Content-Type", "text/html; charset=utf-8")
+	w.Header().Add("X-Custom-Header", "Welcome, Chirpy Admin")
 	w.WriteHeader(http.StatusOK)
 	hits := cfg.fileserverHits.Load()
-	writeString := fmt.Sprintf("Hits: %d\n", hits)
-	w.Write([]byte(writeString))
+	html := fmt.Sprintf("<html><body><h1>Welcome, Chirpy Admin</h1><p>Chirpy has been visited %d times!</p></body></html>", hits)
+	w.Write([]byte(html))
 }
 
 // Create handler that resets the number of requests
@@ -59,9 +60,9 @@ func main() {
 	//Register Readiness Endpoint
 	mux.HandleFunc("GET /api/healthz", handlerReadiness)
 	//Register Metrics Endpoint
-	mux.HandleFunc("GET /api/metrics", apiCFG.metricsHandler)
+	mux.HandleFunc("GET /admin/metrics", apiCFG.metricsHandler)
 	//Register Reset Endpoint
-	mux.HandleFunc("POST /api/reset", apiCFG.resetHandler)
+	mux.HandleFunc("POST /admin/reset", apiCFG.resetHandler)
 
 	//Register FileServer for /app/
 	mux.Handle("/app/", http.StripPrefix("/app", apiCFG.middlewareMetricsInc(handler)))
