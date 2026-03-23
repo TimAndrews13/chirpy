@@ -25,7 +25,7 @@ func (cfg *apiConfig) metricsHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Add("Content-Type", "text/plain; charset=utf-8")
 	w.WriteHeader(http.StatusOK)
 	hits := cfg.fileserverHits.Load()
-	writeString := fmt.Sprintf("Hits: %d", hits)
+	writeString := fmt.Sprintf("Hits: %d\n", hits)
 	w.Write([]byte(writeString))
 }
 
@@ -35,7 +35,7 @@ func (cfg *apiConfig) resetHandler(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 	cfg.fileserverHits.Store(0)
 	hits := cfg.fileserverHits.Load()
-	writeString := fmt.Sprintf("Hits: %d", hits)
+	writeString := fmt.Sprintf("Hits: %d\n", hits)
 	w.Write([]byte(writeString))
 }
 
@@ -43,7 +43,7 @@ func (cfg *apiConfig) resetHandler(w http.ResponseWriter, r *http.Request) {
 func handlerReadiness(w http.ResponseWriter, r *http.Request) {
 	w.Header().Add("Content-Type", "text/plain; charset=utf-8")
 	w.WriteHeader(http.StatusOK)
-	w.Write([]byte("OK"))
+	w.Write([]byte("OK\n"))
 }
 
 func main() {
@@ -57,11 +57,11 @@ func main() {
 	apiCFG := apiConfig{}
 
 	//Register Readiness Endpoint
-	mux.HandleFunc("/healthz", handlerReadiness)
+	mux.HandleFunc("GET /healthz", handlerReadiness)
 	//Register Metrics Endpoint
-	mux.HandleFunc("/metrics", apiCFG.metricsHandler)
+	mux.HandleFunc("GET /metrics", apiCFG.metricsHandler)
 	//Register Reset Endpoint
-	mux.HandleFunc("/reset", apiCFG.resetHandler)
+	mux.HandleFunc("POST /reset", apiCFG.resetHandler)
 
 	//Register FileServer for /app/
 	mux.Handle("/app/", http.StripPrefix("/app", apiCFG.middlewareMetricsInc(handler)))
