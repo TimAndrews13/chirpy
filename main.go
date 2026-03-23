@@ -57,11 +57,11 @@ func main() {
 	apiCFG := apiConfig{}
 
 	//Register Readiness Endpoint
-	mux.HandleFunc("GET /healthz", handlerReadiness)
+	mux.HandleFunc("GET /api/healthz", handlerReadiness)
 	//Register Metrics Endpoint
-	mux.HandleFunc("GET /metrics", apiCFG.metricsHandler)
+	mux.HandleFunc("GET /api/metrics", apiCFG.metricsHandler)
 	//Register Reset Endpoint
-	mux.HandleFunc("POST /reset", apiCFG.resetHandler)
+	mux.HandleFunc("POST /api/reset", apiCFG.resetHandler)
 
 	//Register FileServer for /app/
 	mux.Handle("/app/", http.StripPrefix("/app", apiCFG.middlewareMetricsInc(handler)))
