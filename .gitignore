@@ -1,0 +1,5 @@
+# Compiled binaries
+out/
+
+# Environment variables
+.env
