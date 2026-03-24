@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
@@ -23,7 +24,6 @@ func (cfg *apiConfig) middlewareMetricsInc(next http.Handler) http.Handler {
 // Create handler that writes the number of requests so far
 func (cfg *apiConfig) metricsHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Add("Content-Type", "text/html; charset=utf-8")
-	w.Header().Add("X-Custom-Header", "Welcome, Chirpy Admin")
 	w.WriteHeader(http.StatusOK)
 	hits := cfg.fileserverHits.Load()
 	html := fmt.Sprintf("<html><body><h1>Welcome, Chirpy Admin</h1><p>Chirpy has been visited %d times!</p></body></html>", hits)
@@ -38,6 +38,78 @@ func (cfg *apiConfig) resetHandler(w http.ResponseWriter, r *http.Request) {
 	hits := cfg.fileserverHits.Load()
 	writeString := fmt.Sprintf("Hits: %d\n", hits)
 	w.Write([]byte(writeString))
+}
+
+// Helper Function for respond with Error
+func respondWithError(w http.ResponseWriter, code int, msg string) {
+	//Set struct that is shape of JSON
+	type returnVals struct {
+		Error string `json:"error"`
+	}
+
+	//Set respBody and its value
+	respBody := returnVals{
+		Error: msg,
+	}
+	//Marshall respBody to JSON
+	dat, err := json.Marshal(respBody)
+	if err != nil {
+		log.Printf("Error marsalling JSON: %s", err)
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+	//Set Headers and Write data
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(code)
+	w.Write(dat)
+}
+
+// Helper Function for respond with JSON
+func respondWithJSON(w http.ResponseWriter, code int, payload interface{}) {
+	//Marshall payload to JSON
+	dat, err := json.Marshal(payload)
+	if err != nil {
+		log.Printf("Error marshalling JSON: %s", err)
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+	//Set Headers and Write data
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(code)
+	w.Write(dat)
+}
+
+// Create hanlder that accepts POST requests at /api/validate_chirp
+func handlerValidateChirp(w http.ResponseWriter, r *http.Request) {
+	//Set struct to receive JSON
+	type parameters struct {
+		Body string `json:"body"`
+	}
+
+	//Decode JSON Request Body
+	decoder := json.NewDecoder(r.Body)
+	params := parameters{}
+	err := decoder.Decode(&params)
+	if err != nil {
+		log.Printf("Error decoding parameters: %s", err)
+		respondWithError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	//Check length of parms.body
+	if len(params.Body) > 140 {
+		respondWithError(w, http.StatusBadRequest, "Chirp is too long")
+		return
+	}
+
+	//Set struct to respond with JSON
+	type respJSON struct {
+		Valid bool `json:"valid"`
+	}
+
+	resBody := respJSON{Valid: true}
+
+	respondWithJSON(w, http.StatusOK, resBody)
 }
 
 // Add Readiness Endpoint
@@ -63,6 +135,8 @@ func main() {
 	mux.HandleFunc("GET /admin/metrics", apiCFG.metricsHandler)
 	//Register Reset Endpoint
 	mux.HandleFunc("POST /admin/reset", apiCFG.resetHandler)
+	//Register Validat Chirp Endpoint
+	mux.HandleFunc("POST /api/validate_chirp", handlerValidateChirp)
 
 	//Register FileServer for /app/
 	mux.Handle("/app/", http.StripPrefix("/app", apiCFG.middlewareMetricsInc(handler)))
