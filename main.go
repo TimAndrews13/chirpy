@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"strings"
 	"sync/atomic"
 )
 
@@ -79,7 +80,19 @@ func respondWithJSON(w http.ResponseWriter, code int, payload interface{}) {
 	w.Write(dat)
 }
 
-// Create hanlder that accepts POST requests at /api/validate_chirp
+// Helper Function to Remove Bad Words
+func helperCleanText(msg string, badWords map[string]struct{}) string {
+
+	words := strings.Split(msg, " ")
+	for i, word := range words {
+		if _, ok := badWords[strings.ToLower(word)]; ok {
+			words[i] = "****"
+		}
+	}
+	return strings.Join(words, " ")
+}
+
+// Create handler that accepts POST requests at /api/validate_chirp
 func handlerValidateChirp(w http.ResponseWriter, r *http.Request) {
 	//Set struct to receive JSON
 	type parameters struct {
@@ -102,12 +115,20 @@ func handlerValidateChirp(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	//Pass params.Body into Helper Funciton to Clean Bad Words
+	badWords := map[string]struct{}{
+		"kerfuffle": {},
+		"sharbert":  {},
+		"fornax":    {},
+	}
+	params.Body = helperCleanText(params.Body, badWords)
+
 	//Set struct to respond with JSON
 	type respJSON struct {
-		Valid bool `json:"valid"`
+		CleanedBody string `json:"cleaned_body"`
 	}
 
-	resBody := respJSON{Valid: true}
+	resBody := respJSON{CleanedBody: params.Body}
 
 	respondWithJSON(w, http.StatusOK, resBody)
 }
