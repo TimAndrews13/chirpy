@@ -1,17 +1,24 @@
 package main
 
 import (
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
+	"os"
 	"strings"
 	"sync/atomic"
+
+	"github.com/TimAndrews13/chirpy/internal/database"
+	"github.com/joho/godotenv"
+	_ "github.com/lib/pq"
 )
 
 // Struct to Track Stateful, In-Memory data
 type apiConfig struct {
 	fileserverHits atomic.Int32
+	db             *database.Queries
 }
 
 // Middleware Method for Incrementing fileserverHits
@@ -141,6 +148,20 @@ func handlerReadiness(w http.ResponseWriter, r *http.Request) {
 }
 
 func main() {
+	//Load .env file and get connection
+	godotenv.Load()
+	dbURL := os.Getenv("DB_URL")
+	if dbURL == "" {
+		log.Fatal("DB_URL must be set")
+	}
+	//Open DB connection
+	db, err := sql.Open("postgres", dbURL)
+	if err != nil {
+		log.Fatalf("error connecting to postgres database: %v\n", err)
+	}
+	//Create new database queries
+	dbQueries := database.New(db)
+
 	//Create ServeMux
 	mux := http.NewServeMux()
 
@@ -148,19 +169,22 @@ func main() {
 	handler := http.FileServer(http.Dir("."))
 
 	//Define Tracker for in-memory data
-	apiCFG := apiConfig{}
+	apiCfg := apiConfig{
+		fileserverHits: atomic.Int32{},
+		db:             dbQueries,
+	}
 
 	//Register Readiness Endpoint
 	mux.HandleFunc("GET /api/healthz", handlerReadiness)
 	//Register Metrics Endpoint
-	mux.HandleFunc("GET /admin/metrics", apiCFG.metricsHandler)
+	mux.HandleFunc("GET /admin/metrics", apiCfg.metricsHandler)
 	//Register Reset Endpoint
-	mux.HandleFunc("POST /admin/reset", apiCFG.resetHandler)
+	mux.HandleFunc("POST /admin/reset", apiCfg.resetHandler)
 	//Register Validat Chirp Endpoint
 	mux.HandleFunc("POST /api/validate_chirp", handlerValidateChirp)
 
 	//Register FileServer for /app/
-	mux.Handle("/app/", http.StripPrefix("/app", apiCFG.middlewareMetricsInc(handler)))
+	mux.Handle("/app/", http.StripPrefix("/app", apiCfg.middlewareMetricsInc(handler)))
 
 	//Define Server Params
 	server := &http.Server{
