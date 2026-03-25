@@ -121,15 +121,15 @@ type Chirp struct {
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
 	Body      string    `json:"body"`
-	User_ID   uuid.UUID `json:"user_id"`
+	UserID    uuid.UUID `json:"user_id"`
 }
 
 // Create handler that accepts POST requests at /api/validate_chirp
 func (cfg *apiConfig) handlerNewChirp(w http.ResponseWriter, r *http.Request) {
 	//Set struct to receive JSON
 	type parameters struct {
-		Body    string    `json:"body"`
-		User_ID uuid.UUID `json:"user_id"`
+		Body   string    `json:"body"`
+		UserID uuid.UUID `json:"user_id"`
 	}
 
 	//Decode JSON Request Body
@@ -159,7 +159,7 @@ func (cfg *apiConfig) handlerNewChirp(w http.ResponseWriter, r *http.Request) {
 	//Use CreateChrip SQL Query to create the new chrip and return the new chirp
 	chirp, err := cfg.db.CreateChirp(r.Context(), database.CreateChirpParams{
 		Body:   params.Body,
-		UserID: uuid.NullUUID{UUID: params.User_ID, Valid: true},
+		UserID: uuid.NullUUID{UUID: params.UserID, Valid: true},
 	})
 	if err != nil {
 		log.Printf("error creating new chirp: %s\n", err)
@@ -173,7 +173,7 @@ func (cfg *apiConfig) handlerNewChirp(w http.ResponseWriter, r *http.Request) {
 		CreatedAt: chirp.CreatedAt,
 		UpdatedAt: chirp.UpdatedAt,
 		Body:      chirp.Body,
-		User_ID:   chirp.UserID.UUID,
+		UserID:    chirp.UserID.UUID,
 	}
 
 	//Pass new main package Chrip Struct as payload for respondWithJSON helper function
@@ -198,11 +198,43 @@ func (cfg *apiConfig) handlerGetAllChirps(w http.ResponseWriter, r *http.Request
 		resChirps[i].CreatedAt = chirps[i].CreatedAt
 		resChirps[i].UpdatedAt = chirps[i].UpdatedAt
 		resChirps[i].Body = chirps[i].Body
-		resChirps[i].User_ID = chirps[i].UserID.UUID
+		resChirps[i].UserID = chirps[i].UserID.UUID
 	}
 
 	//Pass new Array of main package Chirps Struct as payload for respondWithJSON helper function
 	respondWithJSON(w, http.StatusOK, resChirps)
+}
+
+// Add Handler to Get Single Chirp
+func (cfg *apiConfig) handlerGetChirp(w http.ResponseWriter, r *http.Request) {
+	//Check if Chirp ID exists
+	chirpIDString := r.PathValue("chirpID")
+	chirpID, err := uuid.Parse(chirpIDString)
+	if err != nil {
+		log.Printf("chirp not found: %s", err)
+		respondWithError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	//Use GetChirp to retrieve chirp from postgres database
+	chirp, err := cfg.db.GetChirp(r.Context(), chirpID)
+	if err != nil {
+		log.Printf("chirp not found: %s", err)
+		respondWithError(w, http.StatusNotFound, err.Error())
+		return
+	}
+
+	//Set Response Chirp struct using struct in main package
+	resChirp := Chirp{
+		ID:        chirp.ID,
+		CreatedAt: chirp.CreatedAt,
+		UpdatedAt: chirp.UpdatedAt,
+		Body:      chirp.Body,
+		UserID:    chirp.UserID.UUID,
+	}
+
+	//Pass Response Chirp as payload for respondWithJSON helper function
+	respondWithJSON(w, http.StatusOK, resChirp)
 }
 
 // Add Readiness Endpoint
@@ -302,6 +334,8 @@ func main() {
 	mux.HandleFunc("POST /api/chirps", apiCfg.handlerNewChirp)
 	//Register API Chirps GET Endpoint
 	mux.HandleFunc("GET /api/chirps", apiCfg.handlerGetAllChirps)
+	//Register API Chirps GET Endpoint for Single Chirp
+	mux.HandleFunc("GET /api/chirps/{chirpID}", apiCfg.handlerGetChirp)
 
 	//Register FileServer for /app/
 	mux.Handle("/app/", http.StripPrefix("/app", apiCfg.middlewareMetricsInc(handler)))
