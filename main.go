@@ -23,6 +23,7 @@ type apiConfig struct {
 	fileserverHits atomic.Int32
 	db             *database.Queries
 	platform       string
+	secretKey      string
 }
 
 // Middleware Method for Incrementing fileserverHits
@@ -125,21 +126,35 @@ type Chirp struct {
 	UserID    uuid.UUID `json:"user_id"`
 }
 
-// Create handler that accepts POST requests at /api/validate_chirp
+// Create handler that accepts POST new chips at api/chirps
 func (cfg *apiConfig) handlerNewChirp(w http.ResponseWriter, r *http.Request) {
 	//Set struct to receive JSON
 	type parameters struct {
-		Body   string    `json:"body"`
-		UserID uuid.UUID `json:"user_id"`
+		Body string `json:"body"`
+	}
+
+	//Get Bearer Token
+	tokenString, err := auth.GetBearerToken(r.Header)
+	if err != nil {
+		respondWithError(w, http.StatusUnauthorized, err.Error())
+		return
 	}
 
 	//Decode JSON Request Body
 	decoder := json.NewDecoder(r.Body)
 	params := parameters{}
-	err := decoder.Decode(&params)
+	err = decoder.Decode(&params)
 	if err != nil {
 		log.Printf("Error decoding parameters: %s", err)
 		respondWithError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	//Validate token
+	userID, err := auth.ValidateJWT(tokenString, cfg.secretKey)
+	if err != nil {
+		log.Printf("error validating token: %s", err)
+		respondWithError(w, http.StatusUnauthorized, err.Error())
 		return
 	}
 
@@ -160,7 +175,7 @@ func (cfg *apiConfig) handlerNewChirp(w http.ResponseWriter, r *http.Request) {
 	//Use CreateChrip SQL Query to create the new chrip and return the new chirp
 	chirp, err := cfg.db.CreateChirp(r.Context(), database.CreateChirpParams{
 		Body:   params.Body,
-		UserID: uuid.NullUUID{UUID: params.UserID, Valid: true},
+		UserID: uuid.NullUUID{UUID: userID, Valid: true},
 	})
 	if err != nil {
 		log.Printf("error creating new chirp: %s\n", err)
@@ -306,8 +321,9 @@ func (cfg *apiConfig) handlerNewUser(w http.ResponseWriter, r *http.Request) {
 func (cfg *apiConfig) handlerLoginUser(w http.ResponseWriter, r *http.Request) {
 	//Set struct to receive JSON
 	type parameters struct {
-		Password string `json:"password"`
-		Email    string `json:"email"`
+		Password         string `json:"password"`
+		Email            string `json:"email"`
+		ExpiresInSeconds *int   `json:"expires_in_seconds"`
 	}
 
 	//Decode JSON Request Body
@@ -318,6 +334,12 @@ func (cfg *apiConfig) handlerLoginUser(w http.ResponseWriter, r *http.Request) {
 		log.Printf("Error decoding parameters: %s", err)
 		respondWithError(w, http.StatusInternalServerError, err.Error())
 		return
+	}
+
+	//Check ExpiresinSeconds and set to default if nil
+	defaultSeconds := 3600
+	if params.ExpiresInSeconds == nil || *params.ExpiresInSeconds > 3600 {
+		params.ExpiresInSeconds = &defaultSeconds
 	}
 
 	//Use GetUser SQL Query to pull user by email
@@ -335,6 +357,21 @@ func (cfg *apiConfig) handlerLoginUser(w http.ResponseWriter, r *http.Request) {
 		respondWithError(w, http.StatusUnauthorized, "Incorrect email or password")
 		return
 	}
+
+	//Make JWT Token
+	token, err := auth.MakeJWT(user.ID, cfg.secretKey, time.Duration(*params.ExpiresInSeconds)*time.Second)
+	if err != nil {
+		log.Printf("Error creating token: %s", err)
+		respondWithError(w, http.StatusInternalServerError, "error creating token")
+		return
+	}
+
+	//Set internal response struct for hanlderLoginUser
+	type response struct {
+		User
+		Token string `json:"token"`
+	}
+
 	//Map the database package User Sruct to main package User Struct
 	returnUser := User{
 		ID:        user.ID,
@@ -343,8 +380,14 @@ func (cfg *apiConfig) handlerLoginUser(w http.ResponseWriter, r *http.Request) {
 		Email:     user.Email,
 	}
 
+	//Map response struct
+	responseStruct := response{
+		User:  returnUser,
+		Token: token,
+	}
+
 	//User Respong with JSON Helper Function to Marhsal return User
-	respondWithJSON(w, http.StatusOK, returnUser)
+	respondWithJSON(w, http.StatusOK, responseStruct)
 }
 
 func main() {
@@ -358,6 +401,11 @@ func main() {
 	platform := os.Getenv("PLATFORM")
 	if platform == "" {
 		log.Fatal("PLATFORM must be set")
+	}
+	//Get Secret Key from .env fil
+	secretKey := os.Getenv("SECRET")
+	if secretKey == "" {
+		log.Fatal("SECRET must be set")
 	}
 	//Open DB connection
 	db, err := sql.Open("postgres", dbURL)
@@ -378,6 +426,7 @@ func main() {
 		fileserverHits: atomic.Int32{},
 		db:             dbQueries,
 		platform:       platform,
+		secretKey:      secretKey,
 	}
 
 	//Register Readiness Endpoint
