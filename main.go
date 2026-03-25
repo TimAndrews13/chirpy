@@ -11,6 +11,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/TimAndrews13/chirpy/internal/auth"
 	"github.com/TimAndrews13/chirpy/internal/database"
 	"github.com/google/uuid"
 	"github.com/joho/godotenv"
@@ -256,7 +257,8 @@ type User struct {
 func (cfg *apiConfig) handlerNewUser(w http.ResponseWriter, r *http.Request) {
 	//Set struct to receive JSON
 	type parameters struct {
-		Email string `json:"email"`
+		Password string `json:"password"`
+		Email    string `json:"email"`
 	}
 
 	//Decode JSON Request Body
@@ -269,8 +271,19 @@ func (cfg *apiConfig) handlerNewUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	//Hash Password
+	hashedPassword, err := auth.HashPassword(params.Password)
+	if err != nil {
+		log.Printf("error hashing password: %s", err)
+		respondWithError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
 	//Use CreateUser SQL Query to create the new user and return the new user
-	user, err := cfg.db.CreateUser(r.Context(), params.Email)
+	user, err := cfg.db.CreateUser(r.Context(), database.CreateUserParams{
+		Email:          params.Email,
+		HashedPassword: hashedPassword,
+	})
 	if err != nil {
 		log.Printf("error creating new user: %s", err)
 		respondWithError(w, http.StatusInternalServerError, err.Error())
@@ -287,6 +300,51 @@ func (cfg *apiConfig) handlerNewUser(w http.ResponseWriter, r *http.Request) {
 
 	//User Respong with JSON Helper Function to Marhsal return User
 	respondWithJSON(w, http.StatusCreated, returnUser)
+}
+
+// Add handler for Logging in User
+func (cfg *apiConfig) handlerLoginUser(w http.ResponseWriter, r *http.Request) {
+	//Set struct to receive JSON
+	type parameters struct {
+		Password string `json:"password"`
+		Email    string `json:"email"`
+	}
+
+	//Decode JSON Request Body
+	decoder := json.NewDecoder(r.Body)
+	params := parameters{}
+	err := decoder.Decode(&params)
+	if err != nil {
+		log.Printf("Error decoding parameters: %s", err)
+		respondWithError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	//Use GetUser SQL Query to pull user by email
+	user, err := cfg.db.GetUser(r.Context(), params.Email)
+	if err != nil {
+		log.Printf("error geting user: %s", err)
+		respondWithError(w, http.StatusUnauthorized, "Incorrect email or password")
+		return
+	}
+
+	//Check Entered Password in Params against Returned Users Hashed Password
+	ok, _ := auth.CheckPasswordHash(params.Password, user.HashedPassword)
+	if !ok {
+		log.Printf("Incorrect email or password: %s", err)
+		respondWithError(w, http.StatusUnauthorized, "Incorrect email or password")
+		return
+	}
+	//Map the database package User Sruct to main package User Struct
+	returnUser := User{
+		ID:        user.ID,
+		CreatedAt: user.CreatedAt,
+		UpdatedAt: user.UpdatedAt,
+		Email:     user.Email,
+	}
+
+	//User Respong with JSON Helper Function to Marhsal return User
+	respondWithJSON(w, http.StatusOK, returnUser)
 }
 
 func main() {
@@ -330,6 +388,8 @@ func main() {
 	mux.HandleFunc("POST /admin/reset", apiCfg.resetHandler)
 	//Register API User Endpoint
 	mux.HandleFunc("POST /api/users", apiCfg.handlerNewUser)
+	//Register API Login Endpoint
+	mux.HandleFunc("POST /api/login", apiCfg.handlerLoginUser)
 	//Register API Chirps POST Endpoint
 	mux.HandleFunc("POST /api/chirps", apiCfg.handlerNewChirp)
 	//Register API Chirps GET Endpoint

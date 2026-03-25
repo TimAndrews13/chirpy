@@ -4,3 +4,6 @@ out
 # Environment variables
 .env
 chirpy
+
+# Tests
+*.test
