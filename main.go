@@ -180,6 +180,31 @@ func (cfg *apiConfig) handlerNewChirp(w http.ResponseWriter, r *http.Request) {
 	respondWithJSON(w, http.StatusCreated, resChirp)
 }
 
+// Add Handler to Get All Chirps
+func (cfg *apiConfig) handlerGetAllChirps(w http.ResponseWriter, r *http.Request) {
+	//Use GetAllChirps function to pull all Chirps from postgres
+	chirps, err := cfg.db.GetAllChirps(r.Context())
+	if err != nil {
+		log.Printf("error retrieving all chirps: %s", err)
+		respondWithError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	//Set Array of main package Chirps Struct
+	resChirps := make([]Chirp, len(chirps))
+
+	for i := range chirps {
+		resChirps[i].ID = chirps[i].ID
+		resChirps[i].CreatedAt = chirps[i].CreatedAt
+		resChirps[i].UpdatedAt = chirps[i].UpdatedAt
+		resChirps[i].Body = chirps[i].Body
+		resChirps[i].User_ID = chirps[i].UserID.UUID
+	}
+
+	//Pass new Array of main package Chirps Struct as payload for respondWithJSON helper function
+	respondWithJSON(w, http.StatusOK, resChirps)
+}
+
 // Add Readiness Endpoint
 func handlerReadiness(w http.ResponseWriter, r *http.Request) {
 	w.Header().Add("Content-Type", "text/plain; charset=utf-8")
@@ -273,8 +298,10 @@ func main() {
 	mux.HandleFunc("POST /admin/reset", apiCfg.resetHandler)
 	//Register API User Endpoint
 	mux.HandleFunc("POST /api/users", apiCfg.handlerNewUser)
-	//Register API Chirps Endpoint
+	//Register API Chirps POST Endpoint
 	mux.HandleFunc("POST /api/chirps", apiCfg.handlerNewChirp)
+	//Register API Chirps GET Endpoint
+	mux.HandleFunc("GET /api/chirps", apiCfg.handlerGetAllChirps)
 
 	//Register FileServer for /app/
 	mux.Handle("/app/", http.StripPrefix("/app", apiCfg.middlewareMetricsInc(handler)))
