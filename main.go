@@ -115,11 +115,21 @@ func (cfg *apiConfig) resetHandler(w http.ResponseWriter, r *http.Request) {
 	w.Write([]byte(writeString))
 }
 
+// Create Chirp struct
+type Chirp struct {
+	ID        uuid.UUID `json:"id"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+	Body      string    `json:"body"`
+	User_ID   uuid.UUID `json:"user_id"`
+}
+
 // Create handler that accepts POST requests at /api/validate_chirp
-func handlerValidateChirp(w http.ResponseWriter, r *http.Request) {
+func (cfg *apiConfig) handlerNewChirp(w http.ResponseWriter, r *http.Request) {
 	//Set struct to receive JSON
 	type parameters struct {
-		Body string `json:"body"`
+		Body    string    `json:"body"`
+		User_ID uuid.UUID `json:"user_id"`
 	}
 
 	//Decode JSON Request Body
@@ -146,14 +156,28 @@ func handlerValidateChirp(w http.ResponseWriter, r *http.Request) {
 	}
 	params.Body = helperCleanText(params.Body, badWords)
 
-	//Set struct to respond with JSON
-	type respJSON struct {
-		CleanedBody string `json:"cleaned_body"`
+	//Use CreateChrip SQL Query to create the new chrip and return the new chirp
+	chirp, err := cfg.db.CreateChirp(r.Context(), database.CreateChirpParams{
+		Body:   params.Body,
+		UserID: uuid.NullUUID{UUID: params.User_ID, Valid: true},
+	})
+	if err != nil {
+		log.Printf("error creating new chirp: %s\n", err)
+		respondWithError(w, http.StatusInternalServerError, err.Error())
+		return
 	}
 
-	resBody := respJSON{CleanedBody: params.Body}
+	//Map the database package User Sruct to main package Chirp Struct
+	resChirp := Chirp{
+		ID:        chirp.ID,
+		CreatedAt: chirp.CreatedAt,
+		UpdatedAt: chirp.UpdatedAt,
+		Body:      chirp.Body,
+		User_ID:   chirp.UserID.UUID,
+	}
 
-	respondWithJSON(w, http.StatusOK, resBody)
+	//Pass new main package Chrip Struct as payload for respondWithJSON helper function
+	respondWithJSON(w, http.StatusCreated, resChirp)
 }
 
 // Add Readiness Endpoint
@@ -247,10 +271,10 @@ func main() {
 	mux.HandleFunc("GET /admin/metrics", apiCfg.metricsHandler)
 	//Register Reset Endpoint
 	mux.HandleFunc("POST /admin/reset", apiCfg.resetHandler)
-	//Register Validat Chirp Endpoint
-	mux.HandleFunc("POST /api/validate_chirp", handlerValidateChirp)
 	//Register API User Endpoint
 	mux.HandleFunc("POST /api/users", apiCfg.handlerNewUser)
+	//Register API Chirps Endpoint
+	mux.HandleFunc("POST /api/chirps", apiCfg.handlerNewChirp)
 
 	//Register FileServer for /app/
 	mux.Handle("/app/", http.StripPrefix("/app", apiCfg.middlewareMetricsInc(handler)))
