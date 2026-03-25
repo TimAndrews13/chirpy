@@ -9,8 +9,10 @@ import (
 	"os"
 	"strings"
 	"sync/atomic"
+	"time"
 
 	"github.com/TimAndrews13/chirpy/internal/database"
+	"github.com/google/uuid"
 	"github.com/joho/godotenv"
 	_ "github.com/lib/pq"
 )
@@ -147,6 +149,49 @@ func handlerReadiness(w http.ResponseWriter, r *http.Request) {
 	w.Write([]byte("OK\n"))
 }
 
+// Create User struct
+type User struct {
+	ID        uuid.UUID `json:"id"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+	Email     string    `json:"email"`
+}
+
+// Add Handler for Creating New Users
+func (cfg *apiConfig) handlerNewUser(w http.ResponseWriter, r *http.Request) {
+	//Set struct to receive JSON
+	type parameters struct {
+		Email string `json:"email"`
+	}
+
+	//Decode JSON Request Body
+	decoder := json.NewDecoder(r.Body)
+	params := parameters{}
+	err := decoder.Decode(&params)
+	if err != nil {
+		log.Printf("Error decoding parameters: %s", err)
+		respondWithError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	//Use CreateUser SQL Query to create the new user and return the new user
+	user, err := cfg.db.CreateUser(r.Context(), params.Email)
+	if err != nil {
+		log.Printf("error creating new user: %s", err)
+	}
+
+	//Map the database package User Sruct to main package User Struct
+	returnUser := User{
+		ID:        user.ID,
+		CreatedAt: user.CreatedAt,
+		UpdatedAt: user.UpdatedAt,
+		Email:     user.Email,
+	}
+
+	//User Respong with JSON Helper Function to Marhsal return User
+	respondWithJSON(w, http.StatusCreated, returnUser)
+}
+
 func main() {
 	//Load .env file and get connection
 	godotenv.Load()
@@ -182,6 +227,8 @@ func main() {
 	mux.HandleFunc("POST /admin/reset", apiCfg.resetHandler)
 	//Register Validat Chirp Endpoint
 	mux.HandleFunc("POST /api/validate_chirp", handlerValidateChirp)
+	//Register API User Endpoint
+	mux.HandleFunc("POST /api/users", apiCfg.handlerNewUser)
 
 	//Register FileServer for /app/
 	mux.Handle("/app/", http.StripPrefix("/app", apiCfg.middlewareMetricsInc(handler)))
