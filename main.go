@@ -21,6 +21,7 @@ import (
 type apiConfig struct {
 	fileserverHits atomic.Int32
 	db             *database.Queries
+	platform       string
 }
 
 // Middleware Method for Incrementing fileserverHits
@@ -29,25 +30,6 @@ func (cfg *apiConfig) middlewareMetricsInc(next http.Handler) http.Handler {
 		cfg.fileserverHits.Add(1)
 		next.ServeHTTP(w, r)
 	})
-}
-
-// Create handler that writes the number of requests so far
-func (cfg *apiConfig) metricsHandler(w http.ResponseWriter, r *http.Request) {
-	w.Header().Add("Content-Type", "text/html; charset=utf-8")
-	w.WriteHeader(http.StatusOK)
-	hits := cfg.fileserverHits.Load()
-	html := fmt.Sprintf("<html><body><h1>Welcome, Chirpy Admin</h1><p>Chirpy has been visited %d times!</p></body></html>", hits)
-	w.Write([]byte(html))
-}
-
-// Create handler that resets the number of requests
-func (cfg *apiConfig) resetHandler(w http.ResponseWriter, r *http.Request) {
-	w.Header().Add("Content-Type", "text/plain; charset=utf-8")
-	w.WriteHeader(http.StatusOK)
-	cfg.fileserverHits.Store(0)
-	hits := cfg.fileserverHits.Load()
-	writeString := fmt.Sprintf("Hits: %d\n", hits)
-	w.Write([]byte(writeString))
 }
 
 // Helper Function for respond with Error
@@ -99,6 +81,38 @@ func helperCleanText(msg string, badWords map[string]struct{}) string {
 		}
 	}
 	return strings.Join(words, " ")
+}
+
+// Create handler that writes the number of requests so far
+func (cfg *apiConfig) metricsHandler(w http.ResponseWriter, r *http.Request) {
+	w.Header().Add("Content-Type", "text/html; charset=utf-8")
+	w.WriteHeader(http.StatusOK)
+	hits := cfg.fileserverHits.Load()
+	html := fmt.Sprintf("<html><body><h1>Welcome, Chirpy Admin</h1><p>Chirpy has been visited %d times!</p></body></html>", hits)
+	w.Write([]byte(html))
+}
+
+// Create handler that resets the number of requests
+func (cfg *apiConfig) resetHandler(w http.ResponseWriter, r *http.Request) {
+	//check platform before running resetHandler logic
+	if cfg.platform != "dev" {
+		respondWithError(w, http.StatusForbidden, "action forbidden")
+		return
+	}
+	//Set Reesponse Headers
+	w.Header().Add("Content-Type", "text/plain; charset=utf-8")
+	w.WriteHeader(http.StatusOK)
+	//Reset fileserverHits to 0
+	cfg.fileserverHits.Store(0)
+	hits := cfg.fileserverHits.Load()
+	//Reset User table by Deleting It
+	err := cfg.db.DeleteUsers(r.Context())
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeString := fmt.Sprintf("Hits: %d\n", hits)
+	w.Write([]byte(writeString))
 }
 
 // Create handler that accepts POST requests at /api/validate_chirp
@@ -178,6 +192,8 @@ func (cfg *apiConfig) handlerNewUser(w http.ResponseWriter, r *http.Request) {
 	user, err := cfg.db.CreateUser(r.Context(), params.Email)
 	if err != nil {
 		log.Printf("error creating new user: %s", err)
+		respondWithError(w, http.StatusInternalServerError, err.Error())
+		return
 	}
 
 	//Map the database package User Sruct to main package User Struct
@@ -199,6 +215,11 @@ func main() {
 	if dbURL == "" {
 		log.Fatal("DB_URL must be set")
 	}
+	//Get Platform from .env file
+	platform := os.Getenv("PLATFORM")
+	if platform == "" {
+		log.Fatal("PLATFORM must be set")
+	}
 	//Open DB connection
 	db, err := sql.Open("postgres", dbURL)
 	if err != nil {
@@ -217,6 +238,7 @@ func main() {
 	apiCfg := apiConfig{
 		fileserverHits: atomic.Int32{},
 		db:             dbQueries,
+		platform:       platform,
 	}
 
 	//Register Readiness Endpoint
