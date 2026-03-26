@@ -175,7 +175,7 @@ func (cfg *apiConfig) handlerNewChirp(w http.ResponseWriter, r *http.Request) {
 	//Use CreateChrip SQL Query to create the new chrip and return the new chirp
 	chirp, err := cfg.db.CreateChirp(r.Context(), database.CreateChirpParams{
 		Body:   params.Body,
-		UserID: uuid.NullUUID{UUID: userID, Valid: true},
+		UserID: userID,
 	})
 	if err != nil {
 		log.Printf("error creating new chirp: %s\n", err)
@@ -189,7 +189,7 @@ func (cfg *apiConfig) handlerNewChirp(w http.ResponseWriter, r *http.Request) {
 		CreatedAt: chirp.CreatedAt,
 		UpdatedAt: chirp.UpdatedAt,
 		Body:      chirp.Body,
-		UserID:    chirp.UserID.UUID,
+		UserID:    chirp.UserID,
 	}
 
 	//Pass new main package Chrip Struct as payload for respondWithJSON helper function
@@ -214,7 +214,7 @@ func (cfg *apiConfig) handlerGetAllChirps(w http.ResponseWriter, r *http.Request
 		resChirps[i].CreatedAt = chirps[i].CreatedAt
 		resChirps[i].UpdatedAt = chirps[i].UpdatedAt
 		resChirps[i].Body = chirps[i].Body
-		resChirps[i].UserID = chirps[i].UserID.UUID
+		resChirps[i].UserID = chirps[i].UserID
 	}
 
 	//Pass new Array of main package Chirps Struct as payload for respondWithJSON helper function
@@ -246,7 +246,7 @@ func (cfg *apiConfig) handlerGetChirp(w http.ResponseWriter, r *http.Request) {
 		CreatedAt: chirp.CreatedAt,
 		UpdatedAt: chirp.UpdatedAt,
 		Body:      chirp.Body,
-		UserID:    chirp.UserID.UUID,
+		UserID:    chirp.UserID,
 	}
 
 	//Pass Response Chirp as payload for respondWithJSON helper function
@@ -321,9 +321,8 @@ func (cfg *apiConfig) handlerNewUser(w http.ResponseWriter, r *http.Request) {
 func (cfg *apiConfig) handlerLoginUser(w http.ResponseWriter, r *http.Request) {
 	//Set struct to receive JSON
 	type parameters struct {
-		Password         string `json:"password"`
-		Email            string `json:"email"`
-		ExpiresInSeconds *int   `json:"expires_in_seconds"`
+		Password string `json:"password"`
+		Email    string `json:"email"`
 	}
 
 	//Decode JSON Request Body
@@ -334,12 +333,6 @@ func (cfg *apiConfig) handlerLoginUser(w http.ResponseWriter, r *http.Request) {
 		log.Printf("Error decoding parameters: %s", err)
 		respondWithError(w, http.StatusInternalServerError, err.Error())
 		return
-	}
-
-	//Check ExpiresinSeconds and set to default if nil
-	defaultSeconds := 3600
-	if params.ExpiresInSeconds == nil || *params.ExpiresInSeconds > 3600 {
-		params.ExpiresInSeconds = &defaultSeconds
 	}
 
 	//Use GetUser SQL Query to pull user by email
@@ -358,18 +351,33 @@ func (cfg *apiConfig) handlerLoginUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	//Make JWT Token
-	token, err := auth.MakeJWT(user.ID, cfg.secretKey, time.Duration(*params.ExpiresInSeconds)*time.Second)
+	//Generate JWT Token
+	token, err := auth.MakeJWT(user.ID, cfg.secretKey, time.Hour)
 	if err != nil {
 		log.Printf("Error creating token: %s", err)
 		respondWithError(w, http.StatusInternalServerError, "error creating token")
 		return
 	}
 
+	//Generate Refresh Token
+	refreshToken := auth.MakeRefreshToken()
+	//Add Refresh Token to the Database
+	rToken, err := cfg.db.CreateRefreshToken(r.Context(), database.CreateRefreshTokenParams{
+		Token:     refreshToken,
+		UserID:    user.ID,
+		ExpiresAt: time.Now().Add(time.Hour * 24 * 60),
+	})
+	if err != nil {
+		log.Printf("error creating refresh token: %s", err)
+		respondWithError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
 	//Set internal response struct for hanlderLoginUser
 	type response struct {
 		User
-		Token string `json:"token"`
+		Token        string `json:"token"`
+		RefreshToken string `json:"refresh_token"`
 	}
 
 	//Map the database package User Sruct to main package User Struct
@@ -382,12 +390,76 @@ func (cfg *apiConfig) handlerLoginUser(w http.ResponseWriter, r *http.Request) {
 
 	//Map response struct
 	responseStruct := response{
-		User:  returnUser,
-		Token: token,
+		User:         returnUser,
+		Token:        token,
+		RefreshToken: rToken.Token,
 	}
 
 	//User Respong with JSON Helper Function to Marhsal return User
 	respondWithJSON(w, http.StatusOK, responseStruct)
+}
+
+// Handler Function to Refresh
+func (cfg *apiConfig) handlerRefresh(w http.ResponseWriter, r *http.Request) {
+	//Get Bearer Token
+	tokenString, err := auth.GetBearerToken(r.Header)
+	if err != nil {
+		respondWithError(w, http.StatusUnauthorized, err.Error())
+		return
+	}
+	//Get Refresh Token from the Database
+	refreshToken, err := cfg.db.GetRefreshToken(r.Context(), tokenString)
+	if err != nil {
+		log.Printf("error retrieving refresh token: %s", err)
+		respondWithError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	//Validate RefreshToken
+	if time.Now().After(refreshToken.ExpiresAt) {
+		log.Print("refresh token expired")
+		respondWithError(w, http.StatusUnauthorized, "refresh token expired")
+		return
+	}
+	if !refreshToken.RevokedAt.Time.IsZero() {
+		log.Print("refresh token revoked")
+		respondWithError(w, http.StatusUnauthorized, "refresh token revoked")
+		return
+	}
+	//Generate New JWT
+	token, err := auth.MakeJWT(refreshToken.UserID, cfg.secretKey, time.Hour)
+	if err != nil {
+		log.Printf("Error creating token: %s", err)
+		respondWithError(w, http.StatusInternalServerError, "error creating token")
+		return
+	}
+	// Create Response struct
+	type response struct {
+		Token string `json:"token"`
+	}
+	//Map the database package User Sruct to main package User Struct
+	responseStruct := response{
+		Token: token,
+	}
+	//User Respong with JSON Helper Function to Marhsal return User
+	respondWithJSON(w, http.StatusOK, responseStruct)
+}
+
+func (cfg *apiConfig) handlerRevokeRefreshToken(w http.ResponseWriter, r *http.Request) {
+	//Get Bearer Token
+	tokenString, err := auth.GetBearerToken(r.Header)
+	if err != nil {
+		respondWithError(w, http.StatusUnauthorized, err.Error())
+		return
+	}
+	//Get Refresh Token from the Database
+	err = cfg.db.RevokeRefreshToken(r.Context(), tokenString)
+	if err != nil {
+		log.Printf("error revoking refresh token: %s", err)
+		respondWithError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func main() {
@@ -445,6 +517,10 @@ func main() {
 	mux.HandleFunc("GET /api/chirps", apiCfg.handlerGetAllChirps)
 	//Register API Chirps GET Endpoint for Single Chirp
 	mux.HandleFunc("GET /api/chirps/{chirpID}", apiCfg.handlerGetChirp)
+	//Register Post /api/refresh Endpoint
+	mux.HandleFunc("POST /api/refresh", apiCfg.handlerRefresh)
+	//Register Post /api/revoke Endpoint
+	mux.HandleFunc("POST /api/revoke", apiCfg.handlerRevokeRefreshToken)
 
 	//Register FileServer for /app/
 	mux.Handle("/app/", http.StripPrefix("/app", apiCfg.middlewareMetricsInc(handler)))

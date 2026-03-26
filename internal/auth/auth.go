@@ -1,6 +1,8 @@
 package auth
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"log"
 	"net/http"
@@ -81,4 +83,19 @@ func GetBearerToken(headers http.Header) (string, error) {
 		return token, nil
 	}
 	return "", errors.New("unsupported or invalid authorization scheme")
+}
+
+func MakeRefreshToken() string {
+	b := make([]byte, 32)
+	n, err := rand.Read(b)
+	if err != nil {
+		log.Printf("error while generating random bytes: %v", err)
+		return ""
+	}
+	if n != 32 {
+		log.Printf("expected to read 32 bytes, but read %d bytes", n)
+		return ""
+	}
+	encodedString := hex.EncodeToString(b)
+	return encodedString
 }
