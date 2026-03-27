@@ -252,6 +252,57 @@ func (cfg *apiConfig) handlerGetChirp(w http.ResponseWriter, r *http.Request) {
 	respondWithJSON(w, http.StatusOK, resChirp)
 }
 
+// Add Handler to Get Delete Chirp
+func (cfg *apiConfig) handlerDeleteChirp(w http.ResponseWriter, r *http.Request) {
+	//Get Bearer Token
+	tokenString, err := auth.GetBearerToken(r.Header)
+	if err != nil {
+		respondWithError(w, http.StatusUnauthorized, err.Error())
+		return
+	}
+	//Validate token
+	userID, err := auth.ValidateJWT(tokenString, cfg.secretKey)
+	if err != nil {
+		log.Printf("error validating token: %s", err)
+		respondWithError(w, http.StatusUnauthorized, err.Error())
+		return
+	}
+
+	//Check if Chirp ID exists
+	chirpIDString := r.PathValue("chirpID")
+	chirpID, err := uuid.Parse(chirpIDString)
+	if err != nil {
+		log.Printf("chirp not found: %s", err)
+		respondWithError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	//Use GetChirp to retrieve chirp from postgres database
+	chirp, err := cfg.db.GetChirp(r.Context(), chirpID)
+	if err != nil {
+		log.Printf("chirp not found: %s", err)
+		respondWithError(w, http.StatusNotFound, err.Error())
+		return
+	}
+
+	//Check userID from header against userID from returned chirp
+	if userID != chirp.UserID {
+		respondWithError(w, http.StatusForbidden, "user not creator of chirp")
+		return
+	}
+
+	//Use GetChirp to retrieve chirp from postgres database
+	err = cfg.db.DeleteChirp(r.Context(), chirpID)
+	if err != nil {
+		log.Printf("chirp not found: %s", err)
+		respondWithError(w, http.StatusNotFound, err.Error())
+		return
+	}
+
+	//Pass Response Chirp as payload for respondWithJSON helper function
+	w.WriteHeader(http.StatusNoContent)
+}
+
 // Add Readiness Endpoint
 func handlerReadiness(w http.ResponseWriter, r *http.Request) {
 	w.Header().Add("Content-Type", "text/plain; charset=utf-8")
@@ -580,6 +631,8 @@ func main() {
 	mux.HandleFunc("GET /api/chirps", apiCfg.handlerGetAllChirps)
 	//Register API Chirps GET Endpoint for Single Chirp
 	mux.HandleFunc("GET /api/chirps/{chirpID}", apiCfg.handlerGetChirp)
+	//Register DELETE /api/chrips Endpoint for Single Chirp
+	mux.HandleFunc("DELETE /api/chirps/{chirpID}", apiCfg.handlerDeleteChirp)
 	//Register Post /api/refresh Endpoint
 	mux.HandleFunc("POST /api/refresh", apiCfg.handlerRefresh)
 	//Register Post /api/revoke Endpoint
