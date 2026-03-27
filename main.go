@@ -126,7 +126,7 @@ type Chirp struct {
 	UserID    uuid.UUID `json:"user_id"`
 }
 
-// Create handler that accepts POST new chips at api/chirps
+// Create handler that accepts POST new chirps at api/chirps
 func (cfg *apiConfig) handlerNewChirp(w http.ResponseWriter, r *http.Request) {
 	//Set struct to receive JSON
 	type parameters struct {
@@ -139,6 +139,13 @@ func (cfg *apiConfig) handlerNewChirp(w http.ResponseWriter, r *http.Request) {
 		respondWithError(w, http.StatusUnauthorized, err.Error())
 		return
 	}
+	//Validate token
+	userID, err := auth.ValidateJWT(tokenString, cfg.secretKey)
+	if err != nil {
+		log.Printf("error validating token: %s", err)
+		respondWithError(w, http.StatusUnauthorized, err.Error())
+		return
+	}
 
 	//Decode JSON Request Body
 	decoder := json.NewDecoder(r.Body)
@@ -147,14 +154,6 @@ func (cfg *apiConfig) handlerNewChirp(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		log.Printf("Error decoding parameters: %s", err)
 		respondWithError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-
-	//Validate token
-	userID, err := auth.ValidateJWT(tokenString, cfg.secretKey)
-	if err != nil {
-		log.Printf("error validating token: %s", err)
-		respondWithError(w, http.StatusUnauthorized, err.Error())
 		return
 	}
 
@@ -399,6 +398,68 @@ func (cfg *apiConfig) handlerLoginUser(w http.ResponseWriter, r *http.Request) {
 	respondWithJSON(w, http.StatusOK, responseStruct)
 }
 
+func (cfg *apiConfig) handlerUserUpdate(w http.ResponseWriter, r *http.Request) {
+	//Set struct to receive JSON
+	type parameters struct {
+		Email    string `json:"email"`
+		Password string `json:"password"`
+	}
+
+	//Get Bearer Token
+	tokenString, err := auth.GetBearerToken(r.Header)
+	if err != nil {
+		respondWithError(w, http.StatusUnauthorized, err.Error())
+		return
+	}
+	//Validate token
+	userID, err := auth.ValidateJWT(tokenString, cfg.secretKey)
+	if err != nil {
+		log.Printf("error validating token: %s", err)
+		respondWithError(w, http.StatusUnauthorized, err.Error())
+		return
+	}
+
+	//Decode JSON Request Body
+	decoder := json.NewDecoder(r.Body)
+	params := parameters{}
+	err = decoder.Decode(&params)
+	if err != nil {
+		log.Printf("Error decoding parameters: %s", err)
+		respondWithError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	//Hash New password
+	hashedPassword, err := auth.HashPassword(params.Password)
+	if err != nil {
+		log.Printf("error hashing password: %s", err)
+		respondWithError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	//Update User
+	user, err := cfg.db.UpdateUser(r.Context(), database.UpdateUserParams{
+		Email:          params.Email,
+		HashedPassword: hashedPassword,
+		ID:             userID,
+	})
+	if err != nil {
+		log.Printf("error updating user: %s", err)
+		respondWithError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	//Map the database package User Sruct to main package User Struct
+	returnUser := User{
+		ID:        user.ID,
+		CreatedAt: user.CreatedAt,
+		UpdatedAt: user.UpdatedAt,
+		Email:     user.Email,
+	}
+
+	//User Respong with JSON Helper Function to Marhsal return User
+	respondWithJSON(w, http.StatusOK, returnUser)
+}
+
 // Handler Function to Refresh
 func (cfg *apiConfig) handlerRefresh(w http.ResponseWriter, r *http.Request) {
 	//Get Bearer Token
@@ -511,6 +572,8 @@ func main() {
 	mux.HandleFunc("POST /api/users", apiCfg.handlerNewUser)
 	//Register API Login Endpoint
 	mux.HandleFunc("POST /api/login", apiCfg.handlerLoginUser)
+	//Register PUT /api/users Endpoint
+	mux.HandleFunc("PUT /api/users", apiCfg.handlerUserUpdate)
 	//Register API Chirps POST Endpoint
 	mux.HandleFunc("POST /api/chirps", apiCfg.handlerNewChirp)
 	//Register API Chirps GET Endpoint
