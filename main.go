@@ -198,6 +198,39 @@ func (cfg *apiConfig) handlerNewChirp(w http.ResponseWriter, r *http.Request) {
 
 // Add Handler to Get All Chirps
 func (cfg *apiConfig) handlerGetAllChirps(w http.ResponseWriter, r *http.Request) {
+	//Check for author_id
+	s := r.URL.Query().Get("author_id")
+	//if author_id is present get chirps for user_id
+	if s != "" {
+		userID, err := uuid.Parse(s)
+		if err != nil {
+			log.Printf("userID not found: %s", err)
+			respondWithError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		//GetAllChirpsByUser
+		chirpsByUser, err := cfg.db.GetChirpsByAuthor(r.Context(), userID)
+		if err != nil {
+			log.Printf("error retrieving chirps for user %v: %v", userID, err)
+			respondWithError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		//Set Array of main package Chirps Struct
+		resChirps := make([]Chirp, len(chirpsByUser))
+
+		for i := range chirpsByUser {
+			resChirps[i].ID = chirpsByUser[i].ID
+			resChirps[i].CreatedAt = chirpsByUser[i].CreatedAt
+			resChirps[i].UpdatedAt = chirpsByUser[i].UpdatedAt
+			resChirps[i].Body = chirpsByUser[i].Body
+			resChirps[i].UserID = chirpsByUser[i].UserID
+		}
+
+		//Pass new Array of main package Chirps Struct as payload for respondWithJSON helper function
+		respondWithJSON(w, http.StatusOK, resChirps)
+		return
+	}
+
 	//Use GetAllChirps function to pull all Chirps from postgres
 	chirps, err := cfg.db.GetAllChirps(r.Context())
 	if err != nil {
