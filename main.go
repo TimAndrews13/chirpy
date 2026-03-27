@@ -580,6 +580,21 @@ func (cfg *apiConfig) handlerRevokeRefreshToken(w http.ResponseWriter, r *http.R
 }
 
 func (cfg *apiConfig) handlerUpdateUserToRed(w http.ResponseWriter, r *http.Request) {
+	//Load .env file and get connection
+	godotenv.Load()
+	polkaKey := os.Getenv("POLKA_KEY")
+
+	//Get API Key
+	apiKey, err := auth.GetAPIKey(r.Header)
+	if err != nil {
+		respondWithError(w, http.StatusUnauthorized, err.Error())
+		return
+	}
+	if apiKey != polkaKey {
+		respondWithError(w, http.StatusUnauthorized, "api key does not match polka api key")
+		return
+	}
+
 	//Set struct to receive JSON
 	type parameters struct {
 		Event string `json:"event"`
@@ -590,7 +605,7 @@ func (cfg *apiConfig) handlerUpdateUserToRed(w http.ResponseWriter, r *http.Requ
 	//Decode JSON Request Body
 	decoder := json.NewDecoder(r.Body)
 	params := parameters{}
-	err := decoder.Decode(&params)
+	err = decoder.Decode(&params)
 	if err != nil {
 		log.Printf("Error decoding parameters: %s", err)
 		respondWithError(w, http.StatusInternalServerError, err.Error())
