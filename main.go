@@ -8,6 +8,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"sort"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -198,6 +199,16 @@ func (cfg *apiConfig) handlerNewChirp(w http.ResponseWriter, r *http.Request) {
 
 // Add Handler to Get All Chirps
 func (cfg *apiConfig) handlerGetAllChirps(w http.ResponseWriter, r *http.Request) {
+	//Check for sort method
+	srt := r.URL.Query().Get("sort")
+	if srt != "" && srt != "asc" && srt != "desc" {
+		log.Printf("ivalid sort parameter")
+		respondWithError(w, http.StatusBadRequest, "invalid sort parameter")
+		return
+	}
+	if srt == "" {
+		srt = "asc"
+	}
 	//Check for author_id
 	s := r.URL.Query().Get("author_id")
 	//if author_id is present get chirps for user_id
@@ -215,6 +226,16 @@ func (cfg *apiConfig) handlerGetAllChirps(w http.ResponseWriter, r *http.Request
 			respondWithError(w, http.StatusInternalServerError, err.Error())
 			return
 		}
+		//Sort chirpsByUser Slice
+		if srt == "asc" {
+			sort.Slice(chirpsByUser, func(i, j int) bool {
+				return chirpsByUser[i].CreatedAt.Before(chirpsByUser[j].CreatedAt)
+			})
+		} else if srt == "desc" {
+			sort.Slice(chirpsByUser, func(i, j int) bool {
+				return chirpsByUser[i].CreatedAt.After(chirpsByUser[j].CreatedAt)
+			})
+		}
 		//Set Array of main package Chirps Struct
 		resChirps := make([]Chirp, len(chirpsByUser))
 
@@ -225,7 +246,6 @@ func (cfg *apiConfig) handlerGetAllChirps(w http.ResponseWriter, r *http.Request
 			resChirps[i].Body = chirpsByUser[i].Body
 			resChirps[i].UserID = chirpsByUser[i].UserID
 		}
-
 		//Pass new Array of main package Chirps Struct as payload for respondWithJSON helper function
 		respondWithJSON(w, http.StatusOK, resChirps)
 		return
@@ -239,6 +259,16 @@ func (cfg *apiConfig) handlerGetAllChirps(w http.ResponseWriter, r *http.Request
 		return
 	}
 
+	//Sort chirpsByUser Slice
+	if srt == "asc" {
+		sort.Slice(chirps, func(i, j int) bool {
+			return chirps[i].CreatedAt.Before(chirps[j].CreatedAt)
+		})
+	} else if srt == "desc" {
+		sort.Slice(chirps, func(i, j int) bool {
+			return chirps[i].CreatedAt.After(chirps[j].CreatedAt)
+		})
+	}
 	//Set Array of main package Chirps Struct
 	resChirps := make([]Chirp, len(chirps))
 
